@@ -58,7 +58,7 @@ module Sidekiq
 
         if klass_const
           if defined?(ActiveJob::Base) && klass_const < ActiveJob::Base
-            jid = enqueue_active_job(klass_const).provider_job_id
+            jid = enqueue_active_job(klass_const).try :provider_job_id
           else
             jid = enqueue_sidekiq_worker(klass_const)
           end
@@ -347,7 +347,7 @@ module Sidekiq
       end
 
       def pretty_message
-        JSON.pretty_generate(JSON.parse(message))
+        JSON.pretty_generate JSON.parse(message)
       rescue JSON::ParserError
         message
       end
@@ -379,7 +379,7 @@ module Sidekiq
           out = conn.lrange(jid_history_key, 0, -1) rescue nil
         end
         out&.map do |jid_history_raw|
-          JSON.parse(jid_history_raw)
+          JSON.parse jid_history_raw
         end
       end
 
@@ -472,13 +472,14 @@ module Sidekiq
       def add_jid_history(jid)
         jid_history = {
           jid: jid,
-          last_enqueue_time: @last_enqueue_time
+          enqueued: @last_enqueue_time
         }
+        @history_size ||= Sidekiq.options[:cron_history_size]&.to_i&.-(1)
         Sidekiq.redis do |conn|
           conn.lpush jid_history_key,
                      Sidekiq.dump_json(jid_history)
           # keep only last 10 entries in a fifo manner
-          conn.ltrim jid_history_key, 0, 9
+          conn.ltrim jid_history_key, 0, @history_size || 9
         end
       end
 
